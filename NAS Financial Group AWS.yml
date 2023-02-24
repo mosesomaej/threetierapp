@@ -1,0 +1,91 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Resources:
+  CloudSpaceEngineersAccount:
+    Type: AWS::Organizations::Account
+    Properties:
+      Email: cloudspace.engineers@example.com
+      AccountName: CloudSpace Engineers
+      RoleName: OrganizationsAccountAccessRole
+      ParentId:
+        Fn::ImportValue: RootOrgId
+
+  NASSecurityTeamAccount:
+    Type: AWS::Organizations::Account
+    Properties:
+      Email: nas.security@example.com
+      AccountName: NAS Financial Group Security Team
+      RoleName: OrganizationsAccountAccessRole
+      ParentId:
+        Fn::ImportValue: RootOrgId
+
+  NASOperationsTeamAccount:
+    Type: AWS::Organizations::Account
+    Properties:
+      Email: nas.operations@example.com
+      AccountName: NAS Financial Group Operations Team
+      RoleName: OrganizationsAccountAccessRole
+      ParentId:
+        Fn::ImportValue: RootOrgId
+
+  CloudSpaceEngineersRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: CloudSpaceEngineersRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS:
+                - !Sub "arn:aws:iam::${CloudSpaceEngineersAccount}:root"
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+        - PolicyName: FullAdminAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: '*'
+                Resource: '*'
+              - Effect: Deny
+                Action:
+                  - 'aws-portal:ModifyBilling'
+                  - 'aws-portal:ViewBilling'
+                Resource: '*'
+
+  NASSecurityTeamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: NASSecurityTeamRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS:
+                - !Sub "arn:aws:iam::${NASSecurityTeamAccount}:root"
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+        - PolicyName: FullAdminAccessWithBilling
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: '*'
+                Resource: '*'
+
+  NASOperationsTeamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: NASOperationsTeamRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS:
+                - !Sub "arn:aws:iam::${NASOperationsTeamAccount}:root"
+            Action:
+              - 'sts:AssumeRole'
