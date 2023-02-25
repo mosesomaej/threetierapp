@@ -1,0 +1,201 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: This template containts the configuration details of deploying a highly available application server
+Parameters:
+    # environment:
+    # Type: String
+    # Default: development
+    # AllowedValues:
+    #   - production
+    #   - development
+    # owner:
+    #   Type: String
+    #   Default: "Fox-Cluster"
+    # ownerEmail:
+    #   Type: String
+    #   Default: foxcluster@gmail.com
+    
+  instanceType:
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t2.nano
+      - m1.small
+      - m1.large
+    Description: Enter t2.micro, m1.small, or m1.large. Default is t2.micro.
+  
+  NetWorkStack:
+    Type: String
+    Description: NetworkStack
+    Default: networkStack #exported stack name
+  
+  FileSystemStack:
+    Type: String
+    Description: filesystemStack-EfsId
+    Default: filesystemStack #exported stack name
+      
+  PermissionStack:
+    Type: String
+    Description: IAM Roles and Permissions Stack
+    Default: permissionStack #exported stack name
+    
+  KeyName:
+    Type: "AWS::EC2::KeyPair::KeyName"
+  
+Mappings:
+  RegionMap:
+    us-east-1:
+      web: ami-0b0dcb5067f052a63
+      app: ami-02b972fec07f1e659
+    us-east-2:
+      web: ami-05bfbece1ed5beb54
+    us-west-1:
+      web: ami-0f5e8a042c8bfcd5e
+      app: ami-0e587da169af43ce1
+    us-west-2:
+      web: ami-06e85d4c3149db26a
+      app: ami-08e4eaf54ff5ee95e
+    ca-central-1:
+      web: ami-0ee679ef733e3b8e7
+      app: ami-017f4811a06d3e510
+Resources:
+# Launch Template
+  NaslaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: frontend-web-LT 
+      LaunchTemplateData:
+        IamInstanceProfile:
+          Arn:
+            Fn::ImportValue:
+              !Sub '${PermissionStack}-Arn'
+        DisableApiTermination: true
+        ImageId:
+          !FindInMap [RegionMap, !Ref AWS::Region, web]
+        InstanceType: !Ref instanceType
+        KeyName: !Ref KeyName
+        SecurityGroupIds:
+          - Fn::ImportValue:
+              Fn::Sub: "${NetWorkStack}-FrontWebSgId"
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            yum update -y
+            yum install -y httpd
+            systemctl start httpd
+            systemctl enable httpd
+            echo '<center><h1 style="color:blue;font-size:300%;border:2px solid blue;background-color:lightgrey;">Welcome to NAS Financial Group ${FileSystemStack}</h1></center>' > /var/www/html/index.html
+            
+
+  # AutoScaling Group
+  NasASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn:
+      - ELBTargetGroup
+      - FrontEndAlb
+    Properties:
+      AutoScalingGroupName: frontend-web-ASG
+      LaunchTemplate:
+        LaunchTemplateId: !Ref NaslaunchTemplate
+        Version: !GetAtt NaslaunchTemplate.LatestVersionNumber
+      MaxSize: '5'
+      MinSize: '1'
+      DesiredCapacity: '3'
+      VPCZoneIdentifier:
+        - Fn::ImportValue:
+              Fn::Sub: "${NetWorkStack}-PublicsubnetOneId"
+        - Fn::ImportValue:
+            Fn::Sub: "${NetWorkStack}-PublicsubnetTwoId"
+        - Fn::ImportValue:
+            Fn::Sub: "${NetWorkStack}-PublicsubnetThreeId"
+      TargetGroupARNs:
+        - !Ref ELBTargetGroup
+
+# Target Group
+  ELBTargetGroup:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 2
+      VpcId: 
+        Fn::ImportValue:
+          Fn::Sub: "${NetWorkStack}-VPCID"
+      TargetType: instance
+
+# Load Balanacer
+  FrontEndAlb:
+    Type: "AWS::ElasticLoadBalancingV2::LoadBalancer"
+    Properties:
+        Name: "FrontEndAlb"
+        Scheme: "internet-facing"
+        Type: "application"
+        Subnets:
+          - Fn::ImportValue:
+              Fn::Sub: "${NetWorkStack}-PublicsubnetOneId"
+          - Fn::ImportValue:
+              Fn::Sub: "${NetWorkStack}-PublicsubnetTwoId"
+          - Fn::ImportValue:
+              Fn::Sub: "${NetWorkStack}-PublicsubnetThreeId"
+        SecurityGroups:
+          - Fn::ImportValue:
+              Fn::Sub: "${NetWorkStack}-FrontAlbSgId" 
+          
+        IpAddressType: "ipv4"
+        LoadBalancerAttributes: 
+          - 
+            Key: "access_logs.s3.enabled"
+            Value: "false"
+          - 
+            Key: "idle_timeout.timeout_seconds"
+            Value: "60"
+          - 
+            Key: "deletion_protection.enabled"
+            Value: "false"
+          - 
+            Key: "routing.http2.enabled"
+            Value: "true"
+          - 
+            Key: "routing.http.drop_invalid_header_fields.enabled"
+            Value: "false"
+
+  ElbListener:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ELBTargetGroup
+      LoadBalancerArn: !Ref FrontEndAlb
+      Port: 80
+      Protocol: HTTP
+
+  # HTTPSListener:
+  #   Type: "AWS::ElasticLoadBalancingV2::Listener"
+  #   Properties:
+  #       LoadBalancerArn: !Ref ApplicationLoadBalancer
+  #       Port: 443
+  #       Protocol: "HTTPS"
+  #       SslPolicy: "ELBSecurityPolicy-2016-08"
+  #       # Certificates: 
+  #       #   - 
+  #       #     CertificateArn: arn:aws:acm:eu-central-1:**************:certificate/*********************
+            
+  #       DefaultActions: 
+  #         - 
+  #           Order: 1
+  #           TargetGroupArn: !Ref Test1TargetGroup
+  #           Type: "forward"
+  # ElbListener:
+  #   Type: 'AWS::ElasticLoadBalancingV2::Listener'
+  #   Properties:
+  #     DefaultActions:
+  #       - Type: forward
+  #         TargetGroupArn: !Ref ELBTargetGroup
+  #     LoadBalancerArn: !Ref FrontEndAlb
+  #     Port: 80
+  #     Protocol: HTTP
+  
